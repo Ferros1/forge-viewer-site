@@ -3,18 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Forge Viewer - Toggle Walls</title>
+  <title>Forge Viewer - IfcGUID Toggle + Heater Highlight</title>
 
-  <!-- Forge Viewer Styles -->
-  <link rel="stylesheet" href="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/style.min.css" type="text/css" />
-
+  <link rel="stylesheet" href="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/style.min.css" />
   <style>
     html, body {
       margin: 0;
       padding: 0;
       height: 100%;
       overflow: hidden;
-      background: #fff;
     }
     #forgeViewer {
       width: 100vw;
@@ -26,14 +23,17 @@
 <body>
   <div id="forgeViewer"></div>
 
-  <!-- Forge Viewer Scripts -->
   <script src="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/viewer3D.min.js"></script>
-
   <script>
-    const options = {
-      env: 'AutodeskProduction',
-      accessToken: null
-    };
+    const urn = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6YXV5YmtsbjloeG9jdW5tN2ZzN2l4b3B2cm14eTFwenJ0bzB6d3J3ZWx3aHVxbXQ4LWJhc2ljLWFwcC9Qcm9qZWt0MS5ydnQ';
+
+    const IfcGuids = [
+      "3hjU93LIr8uRMLn3YRp3mh",
+      "3hjU93LIr8uRMLn3YRp3tA",
+      "3hjU93LIr8uRMLn3YRp3qz"
+    ];
+
+    let viewer, matchedDbIds = [], hidden = false;
 
     async function getAccessToken() {
       const response = await fetch('https://forge-token-server.onrender.com/api/token');
@@ -41,59 +41,44 @@
       return data.access_token;
     }
 
-    async function launchViewer(urn) {
-      options.accessToken = await getAccessToken();
+    async function launchViewer() {
+      const accessToken = await getAccessToken();
 
-      Autodesk.Viewing.Initializer(options, () => {
+      Autodesk.Viewing.Initializer({ accessToken }, () => {
         const viewerDiv = document.getElementById('forgeViewer');
-        const viewer = new Autodesk.Viewing.GuiViewer3D(viewerDiv);
+        window.viewer = viewer = new Autodesk.Viewing.GuiViewer3D(viewerDiv);
         viewer.start();
 
-        const documentId = 'urn:' + urn;
-
-        Autodesk.Viewing.Document.load(documentId, (doc) => {
+        Autodesk.Viewing.Document.load('urn:' + urn, (doc) => {
           const defaultModel = doc.getRoot().getDefaultGeometry();
           viewer.loadDocumentNode(doc, defaultModel);
 
-          viewer.addEventListener(Autodesk.Viewing.GEOMETRY_LOADED_EVENT, () => {
-            setTimeout(() => viewer.resize(), 100);
+          viewer.addEventListener(Autodesk.Viewing.GEOMETRY_LOADED_EVENT, async () => {
+            matchedDbIds = await getDbIdsByIfcGUID(viewer.model, IfcGuids);
           });
 
+          // Resize support
           window.addEventListener('resize', () => viewer.resize());
 
-          // Add "Toggle Walls" button
-          const toolbarButton = new Autodesk.Viewing.UI.Button('toggle-walls-btn');
-          toolbarButton.addClass('toggle-walls-btn');
-          toolbarButton.setToolTip('Toggle Wall Visibility');
+          // Add custom button
+          addToggleButton(viewer);
 
-          let wallIds = [];
-          let wallsHidden = false;
+          // Highlight IfcSpaceHeater in red on click
+          viewer.addEventListener(Autodesk.Viewing.SELECTION_CHANGED_EVENT, (event) => {
+            const dbId = event.dbIdArray[0];
+            if (!dbId) return;
 
-          toolbarButton.onClick = () => {
-            if (wallIds.length === 0) {
-              const tree = viewer.model.getInstanceTree();
-              tree.enumNodeChildren(tree.getRootId(), function (dbId) {
-                viewer.getProperties(dbId, function (props) {
-                  if (props && props.name && props.name.toLowerCase().includes("wall")) {
-                    wallIds.push(dbId);
-                  }
-                });
-              }, true);
-            }
+            viewer.model.getProperties(dbId, (props) => {
+              const isHeater = props.properties.some(p =>
+                p.displayName === "IfcExportAs" && p.displayValue === "IfcSpaceHeater"
+              );
 
-            setTimeout(() => {
-              if (wallsHidden) {
-                viewer.show(wallIds);
-              } else {
-                viewer.hide(wallIds);
+              if (isHeater) {
+                const red = new THREE.Vector4(1, 0, 0, 1); // RGBA
+                viewer.setThemingColor(dbId, red);
               }
-              wallsHidden = !wallsHidden;
-            }, 500);
-          };
-
-          const subToolbar = new Autodesk.Viewing.UI.ControlGroup('custom-toolbar');
-          subToolbar.addControl(toolbarButton);
-          viewer.toolbar.addControl(subToolbar);
+            });
+          });
 
         }, (err) => {
           console.error('Document load failed:', err);
@@ -101,8 +86,55 @@
       });
     }
 
-    const urn = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6YXV5YmtsbjloeG9jdW5tN2ZzN2l4b3B2cm14eTFwenJ0bzB6d3J3ZWx3aHVxbXQ4LWJhc2ljLWFwcC9Qcm9qZWt0MS5ydnQ';
-    launchViewer(urn);
+    function addToggleButton(viewer) {
+      const button = new Autodesk.Viewing.UI.Button('toggle-ifc-btn');
+      button.setToolTip('Toggle IfcGUID Elements');
+      button.onClick = async () => {
+        if (!viewer || matchedDbIds.length === 0) {
+          matchedDbIds = await getDbIdsByIfcGUID(viewer.model, IfcGuids);
+          if (matchedDbIds.length === 0) {
+            alert("No matching IfcGUID elements found.");
+            return;
+          }
+        }
+
+        if (hidden) {
+          viewer.show(matchedDbIds);
+        } else {
+          viewer.hide(matchedDbIds);
+        }
+
+        hidden = !hidden;
+      };
+
+      viewer.addEventListener(Autodesk.Viewing.TOOLBAR_CREATED_EVENT, () => {
+        const group = new Autodesk.Viewing.UI.ControlGroup('custom-toolbar');
+        group.addControl(button);
+        viewer.toolbar.addControl(group);
+      });
+    }
+
+    async function getDbIdsByIfcGUID(model, guids) {
+      return new Promise((resolve) => {
+        const tree = model.getInstanceTree();
+        const allDbIds = [];
+        tree.enumNodeChildren(tree.getRootId(), (dbId) => allDbIds.push(dbId), true);
+
+        let result = [], pending = allDbIds.length;
+
+        allDbIds.forEach((dbId) => {
+          model.getProperties(dbId, (props) => {
+            const match = props.properties.find(p =>
+              p.displayName === "IfcGUID" && guids.includes(p.displayValue)
+            );
+            if (match) result.push(dbId);
+            if (--pending === 0) resolve(result);
+          });
+        });
+      });
+    }
+
+    launchViewer();
   </script>
 </body>
 </html>
