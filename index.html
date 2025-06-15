@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Forge Viewer</title>
+  <title>Forge Viewer - Toggle Walls</title>
 
   <!-- Forge Viewer Styles -->
   <link rel="stylesheet" href="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/style.min.css" type="text/css" />
@@ -35,7 +35,6 @@
       accessToken: null
     };
 
-    // Get token from your backend
     async function getAccessToken() {
       const response = await fetch('https://forge-token-server.onrender.com/api/token');
       const data = await response.json();
@@ -56,23 +55,53 @@
           const defaultModel = doc.getRoot().getDefaultGeometry();
           viewer.loadDocumentNode(doc, defaultModel);
 
-          // ✅ Resize viewer after geometry is loaded (fix for mobile)
           viewer.addEventListener(Autodesk.Viewing.GEOMETRY_LOADED_EVENT, () => {
             setTimeout(() => viewer.resize(), 100);
           });
 
-          // Resize on window change (mobile support)
           window.addEventListener('resize', () => viewer.resize());
 
-        }, (errorMsg) => {
-          console.error('Failed to load document:', errorMsg);
+          // Add "Toggle Walls" button
+          const toolbarButton = new Autodesk.Viewing.UI.Button('toggle-walls-btn');
+          toolbarButton.addClass('toggle-walls-btn');
+          toolbarButton.setToolTip('Toggle Wall Visibility');
+
+          let wallIds = [];
+          let wallsHidden = false;
+
+          toolbarButton.onClick = () => {
+            if (wallIds.length === 0) {
+              const tree = viewer.model.getInstanceTree();
+              tree.enumNodeChildren(tree.getRootId(), function (dbId) {
+                viewer.getProperties(dbId, function (props) {
+                  if (props && props.name && props.name.toLowerCase().includes("wall")) {
+                    wallIds.push(dbId);
+                  }
+                });
+              }, true);
+            }
+
+            setTimeout(() => {
+              if (wallsHidden) {
+                viewer.show(wallIds);
+              } else {
+                viewer.hide(wallIds);
+              }
+              wallsHidden = !wallsHidden;
+            }, 500);
+          };
+
+          const subToolbar = new Autodesk.Viewing.UI.ControlGroup('custom-toolbar');
+          subToolbar.addControl(toolbarButton);
+          viewer.toolbar.addControl(subToolbar);
+
+        }, (err) => {
+          console.error('Document load failed:', err);
         });
       });
     }
 
-    // 🔁 Replace with your own URN (base64 encoded)
     const urn = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6YXV5YmtsbjloeG9jdW5tN2ZzN2l4b3B2cm14eTFwenJ0bzB6d3J3ZWx3aHVxbXQ4LWJhc2ljLWFwcC9Qcm9qZWt0MS5ydnQ';
-
     launchViewer(urn);
   </script>
 </body>
